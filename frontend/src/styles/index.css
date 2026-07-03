@@ -1,0 +1,25 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-obsidian-900 text-silver-100 antialiased;
+    font-family: 'Inter', sans-serif;
+  }
+}
+
+@layer components {
+  .glass-panel {
+    @apply bg-obsidian-800/50 backdrop-blur-md border border-silver-400/20 rounded-xl shadow-xl;
+  }
+  
+  .silver-gradient-text {
+    @apply bg-gradient-to-r from-silver-400 to-silver-100 bg-clip-text text-transparent;
+  }
+  
+  .input-obsidian {
+    @apply bg-obsidian-900 border border-silver-400/30 text-silver-100 rounded-lg px-4 py-2 
+           focus:outline-none focus:ring-2 focus:ring-silver-400/50 transition-all duration-200;
+  }
+}
