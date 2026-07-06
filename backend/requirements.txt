@@ -6,3 +6,7 @@ asyncpg
 pgvector
 langchain
 langgraph
+httpx
+beautifulsoup4
+redis
+python-dotenv
