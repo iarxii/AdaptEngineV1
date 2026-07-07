@@ -1,0 +1,36 @@
+version: '3.8'
+
+services:
+  db:
+    image: pgvector/pgvector:pg16 # Using the pgvector image for vector similarity search
+    container_name: adaptengine_db
+    restart: always
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - adaptengine_network
+
+  # We will add the backend/worker services here as we progress to Phase 3 & 4
+  # backend:
+  #   build: .
+  #   volumes:
+  #     - .:/app
+  #   env_file:
+  #     - .env
+  #   depends_on:
+  #     - db
+  #   networks:
+  #     - adaptengine_network
+
+networks:
+  adaptengine_network:
+    driver: bridge
+
+volumes:
+  postgres_data:
