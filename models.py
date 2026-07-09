@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 from typing import Optional, List
-from sqlalchemy import Column, String, DateTime, ForeignKey, Integer, Text, Float
+from sqlalchemy import Column, String, DateTime, ForeignKey, Integer, Text, Float, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship, declarative_base
 from pgvector.sqlalchemy import Vector
@@ -48,11 +48,7 @@ class CrawlQueue(Base):
     logs = relationship("CrawlLog", back_populates="queue")
 
     # Unique constraint across project and url to prevent duplicate crawls in same project
-    __table_args__ = (
-        {'postgresql_unique': 'url', 'unique_constraint': 'uq_project_url'}, 
-    )
-    # Note: Standard SQLAlchemy UniqueConstraint used below for better compatibility
-    # __table_args__ = (UniqueConstraint('project_id', 'url', name='uq_project_url'),)
+    __table_args__ = (UniqueConstraint('project_id', 'url', name='uq_project_url'),)
 
 class PageIndex(Base):
     __tablename__ = 'page_index'

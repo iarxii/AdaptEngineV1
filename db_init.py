@@ -1,7 +1,11 @@
 import os
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from dotenv import load_dotenv
 from models import Base
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Database credentials from environment variables
 DB_USER = os.getenv("DB_USER", "postgres")
@@ -22,13 +26,14 @@ def init_db():
     """
     print(f"Connecting to database at {DB_HOST}...")
     try:
+        # Enable pgvector extension first so that Vector columns can be created
+        with engine.connect() as conn:
+            from sqlalchemy import text
+            conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
+            conn.commit()
+
         # Create tables
         Base.metadata.create_all(bind=engine)
-        
-        # Enable pgvector extension
-        with engine.connect() as conn:
-            conn.execute("CREATE EXTENSION IF NOT EXISTS vector;")
-            conn.commit()
             
         print("✅ Database schema initialized and pgvector extension enabled.")
     except Exception as e:

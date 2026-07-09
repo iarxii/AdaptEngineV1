@@ -4,6 +4,7 @@ pydantic
 sqlalchemy[asyncio]
 asyncpg
 pgvector
+psycopg2-binary
 langchain
 langgraph
 httpx
