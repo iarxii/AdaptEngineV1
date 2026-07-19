@@ -1,6 +1,6 @@
 fastapi
 uvicorn[standard]
-pydantic
+pydantic[email]
 sqlalchemy[asyncio]
 asyncpg
 pgvector
@@ -11,3 +11,6 @@ httpx
 beautifulsoup4
 redis
 python-dotenv
+python-jose[cryptography]
+passlib[bcrypt]
+python-multipart

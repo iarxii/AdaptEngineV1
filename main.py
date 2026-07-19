@@ -1,4 +1,5 @@
 import os
+import uuid
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
@@ -7,10 +8,13 @@ from sqlalchemy.orm import sessionmaker
 from typing import List, Optional
 from pydantic import BaseModel, EmailStr
 from datetime import datetime, timedelta
-from jose import JWT, jwt
+from jose import jwt, JWTError
 from passlib.context import CryptContext
 
 from models import Base, User, ProjectProfile, CrawlQueue, PageIndex, CrawlLog
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # --- CONFIGURATION & DATABASE SETUP ---
 # In production, these would be loaded from a .env file via pydantic-settings

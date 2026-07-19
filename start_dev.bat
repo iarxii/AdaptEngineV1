@@ -83,6 +83,19 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
+echo [Spirit Bird] Database initialized successfully!
+
+:: 6. Starting Services
+echo [Spirit Bird] Starting Backend Service...
+start "AdaptEngine Backend" cmd /k "call backend\venv\Scripts\activate && uvicorn main:app --reload --port 8000"
+
+echo [Spirit Bird] Starting Frontend Service...
+start "AdaptEngine Frontend" cmd /k "cd frontend && npm run dev"
+
 echo [Spirit Bird] Environment is FULLY UP and Initialized.
-echo [Spirit Bird] Use 'docker-compose logs -f' to monitor the backend.
+echo =========================================================
+echo Backend API URL: http://localhost:8000
+echo Frontend UI URL: http://localhost:5173
+echo =========================================================
+echo [Spirit Bird] Use 'docker-compose logs -f' to monitor the database.
 pause

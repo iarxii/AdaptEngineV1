@@ -77,5 +77,26 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-echo -e "${GREEN}[Spirit Bird] 🟢 System is ONLINE.${NC}"
-echo "[Spirit Bird] Monitoring logs: 'docker-compose logs -f'"
+echo -e "${GREEN}[Spirit Bird] Database initialized successfully!${NC}"
+
+# 6. Starting Services
+echo -e "${GREEN}[Spirit Bird] Starting Backend Service...${NC}"
+uvicorn main:app --reload --port 8000 &
+BACKEND_PID=$!
+
+echo -e "${GREEN}[Spirit Bird] Starting Frontend Service...${NC}"
+cd frontend
+npm run dev &
+FRONTEND_PID=$!
+cd ..
+
+echo -e "${GREEN}[Spirit Bird] Environment is FULLY UP and Initialized.${NC}"
+echo "========================================================="
+echo -e "${GREEN}Backend API URL:${NC} http://localhost:8000"
+echo -e "${GREEN}Frontend UI URL:${NC} http://localhost:5173"
+echo "========================================================="
+echo "[Spirit Bird] Use 'docker-compose logs -f' to monitor the database."
+echo "[Spirit Bird] Press CTRL+C to stop all services."
+
+# Wait for background processes
+wait
