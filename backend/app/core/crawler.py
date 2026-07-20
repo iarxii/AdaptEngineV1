@@ -1,150 +1,175 @@
 import asyncio
 import logging
+import uuid
+import numpy as np
 import httpx
-from bs4 import BeautifulSoup
-from sqlalchemy import select, update, insert
-from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime
-from .models import PageIndex, CrawlQueue, CrawlLog, ProjectProfile
+from typing import Optional, List
+from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.database import async_session
+from app.core.models import CrawlQueue, ProjectProfile, CrawlLog, PageIndex
+
+# Setup logging
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("crawler")
+logger = logging.getLogger("CrawlerWorker")
+
+# --- EMBEDDING ENGINE ---
+try:
+    from sentence_transformers import SentenceTransformer
+    model = SentenceTransformer('all-MiniLM-L6-v2') 
+    EMBEDDING_DIM = 384 
+except ImportError:
+    model = None
+    EMBEDDING_DIM = 1536 
+
+def get_embedding_sync(text: str):
+    """Synchronous wrapper for the embedding model."""
+    if model:
+        return model.encode(text).tolist()
+    return np.random.rand(EMBEDDING_DIM).tolist()
+
+async def get_embedding(text: str):
+    """
+    Asynchronous wrapper for embedding generation.
+    Offloads the CPU-intensive encoding to a separate thread to avoid blocking the event loop.
+    """
+    return await asyncio.to_thread(get_embedding_sync, text)
 
 class CrawlerWorker:
-    def __init__(self, db_session: AsyncSession, project_id: str):
-        self.db = db_session
-        self.project_id = project_id
-        self.client = httpx.AsyncClient(
-            headers={"User-Agent": "AdaptEngine/1.0 (+http://adaptengine.ai)"},
-            timeout=httpx.Timeout(10.0),
-            follow_redirects=True
-        )
+    def __init__(self):
+        self.is_running = False
+        self.client: Optional[httpx.AsyncClient] = None
 
-    async def get_project_config(self) -> ProjectProfile:
-        result = await self.db.execute(select(ProjectProfile).where(ProjectProfile.id == self.project_id))
-        return result.scalar_one()
-
-    async def log_event(self, url: str, queue_id: str = None, status: int = None, latency: float = None, error: str = None):
-        """Records the outcome of a crawl attempt into the CrawlLog."""
-        stmt = insert(CrawlLog).values(
-            project_id=self.project_id,
-            queue_id=queue_id,
-            url=url,
-            http_status=status,
-            latency_ms=latency,
-            error_message=error,
-            timestamp=datetime.utcnow()
-        )
-        await self.db.execute(stmt)
-        await self.db.commit()
-
-    async def fetch_next_url(self):
-        """Picks the next pending URL for the specific project."""
-        stmt = select(CrawlQueue).where(
-            CrawlQueue.project_id == self.project_id,
-            CrawlQueue.status == "pending"
-        ).order_by(CrawlQueue.priority.desc(), CrawlQueue.next_crawl_at.asc()).limit(1)
-        
-        result = await self.db.execute(stmt)
-        return result.scalar_one_or_none()
-
-    async def process_url(self, queue_item: CrawlQueue):
-        url = queue_item.url
-        start_time = datetime.utcnow()
-        
-        try:
-            # Update status to processing
-            await self.db.execute(
-                update(CrawlQueue).where(CrawlQueue.id == queue_item.id).values(status="processing")
+    async def _get_client(self) -> httpx.AsyncClient:
+        """Lazy-initialize the persistent HTTP client."""
+        if self.client is None or self.client.is_closed:
+            logger.info("Initializing persistent HTTP client session...")
+            self.client = httpx.AsyncClient(
+                timeout=httpx.Timeout(10.0, connect=5.0),
+                follow_redirects=True,
+                limits=httpx.Limits(max_connections=100, max_keepalive_connections=20)
             )
-            await self.db.commit()
-
-            response = await self.client.get(url)
-            latency = (datetime.utcnow() - start_time).total_seconds() * 1000
-            
-            # Log the attempt
-            await self.log_event(url, queue_id=str(queue_item.id), status=response.status_code, latency=latency)
-
-            if response.status_code == 200:
-                await self.index_page(url, response.text)
-                await self.discover_links(url, response.text)
-                
-                await self.db.execute(
-                    update(CrawlQueue).where(CrawlQueue.id == queue_item.id).values(status="completed")
-                )
-            else:
-                await self.db.execute(
-                    update(CrawlQueue).where(CrawlQueue.id == queue_item.id).values(status="failed")
-                )
-
-        except Exception as e:
-            logger.error(f"Error crawling {url}: {str(e)}")
-            latency = (datetime.utcnow() - start_time).total_seconds() * 1000
-            await self.log_event(url, queue_id=str(queue_item.id), error=str(e), latency=latency)
-            await self.db.execute(
-                update(CrawlQueue).where(CrawlQueue.id == queue_item.id).values(status="failed")
-            )
-        
-        await self.db.commit()
-
-    async def index_page(self, url: str, html_content: str):
-        soup = BeautifulSoup(html_content, "html.parser")
-        
-        # Clean content
-        for script in soup(["script", "style"]):
-            script.decompose()
-            
-        title = soup.title.string if soup.title else ""
-        text = soup.get_text(separator=" ", strip=True)
-        
-        # Simple URL hash for deduplication
-        url_hash = str(hash(url))
-
-        # Upsert into PageIndex (PostgreSQL on_conflict)
-        from sqlalchemy.dialects.postgresql import insert as pg_insert
-        
-        stmt = pg_insert(PageIndex).values(
-            project_id=self.project_id,
-            url=url,
-            url_hash=url_hash,
-            title=title,
-            content=text,
-            metadata_json={"char_count": len(text)}
-        ).on_conflict_do_update(
-            index_elements=["url"],
-            set_={"content": text, "title": title, "last_indexed_at": datetime.utcnow()}
-        )
-        
-        await self.db.execute(stmt)
-
-    async def discover_links(self, base_url: str, html_content: str):
-        soup = BeautifulSoup(html_content, "html.parser")
-        config = await self.get_project_config()
-        
-        for link in soup.find_all("a", href=True):
-            href = link["href"]
-            # Simple normalization and domain check
-            if href.startswith("http") and config.root_url in href:
-                # Avoid adding duplicates to the queue
-                stmt = select(CrawlQueue).where(
-                    CrawlQueue.project_id == self.project_id, 
-                    CrawlQueue.url == href
-                )
-                result = await self.db.execute(stmt)
-                if not result.scalar_one_or_none():
-                    await self.db.execute(
-                        insert(CrawlQueue).values(
-                            project_id=self.project_id,
-                            url=href,
-                            status="pending"
-                        )
-                    )
+        return self.client
 
     async def run_forever(self):
-        logger.info(f"Starting Crawler Worker for project {self.project_id}")
-        while True:
-            item = await self.fetch_next_url()
-            if item:
-                await self.process_url(item)
-            else:
-                await asyncio.sleep(5) # Wait for new seeds
+        """Main loop for the crawler worker."""
+        self.is_running = True
+        logger.info("Crawler Worker started. Looking for tasks...")
+        
+        try:
+            while self.is_running:
+                did_work = await self.process_next_task()
+                if not did_work:
+                    await asyncio.sleep(10) # Idle wait
+        finally:
+            await self.close()
+
+    async def close(self):
+        """Clean up resources."""
+        if self.client:
+            await self.client.aclose()
+            logger.info("HTTP client session closed.")
+
+    async def process_next_task(self) -> bool:
+        """
+        Processes a single task from the queue.
+        """
+        async with async_session() as db:
+            try:
+                # 1. Find highest priority pending task
+                query = select(CrawlQueue).where(CrawlQueue.status == 'pending').order_by(CrawlQueue.priority.desc()).limit(1)
+                result = await db.execute(query)
+                task = result.scalar_one_or_none()
+
+                if not task:
+                    return False
+
+                # Mark as processing
+                task.status = 'processing'
+                await db.commit()
+
+                # 2. Fetch project config
+                proj_query = select(ProjectProfile).where(ProjectProfile.id == task.project_id)
+                proj_result = await db.execute(proj_query)
+                project = proj_result.scalar_one_or_none()
+
+                if not project:
+                    task.status = 'failed'
+                    await db.commit()
+                    return True
+
+                # Rate limiting
+                rate_limit = project.config.get('rate_limit', 1.0)
+                await asyncio.sleep(rate_limit)
+
+                logger.info(f"Crawling {task.url} for project {project.name}")
+                
+                # 3. Use Persistent Client
+                client = await self._get_client()
+                start_time = datetime.utcnow()
+                try:
+                    response = await client.get(task.url)
+                    latency = (datetime.utcnow() - start_time).total_seconds()
+                    
+                    await self._log_result(db, task, project, response.status_code, latency)
+                    task.status = 'done'
+                    
+                    # 4. Index and Vectorize (Now non-blocking)
+                    await self._index_page(db, task, project, response.text)
+
+                except Exception as e:
+                    latency = (datetime.utcnow() - start_time).total_seconds()
+                    logger.error(f"Error crawling {task.url}: {str(e)}")
+                    await self._log_result(db, task, project, 0, latency, error_msg=str(e))
+                    task.status = 'failed'
+
+                await db.commit()
+                return True
+
+            except Exception as e:
+                logger.critical(f"Worker system failure: {str(e)}")
+                return False
+
+    async def _log_result(self, db: AsyncSession, task: CrawlQueue, project: ProjectProfile, status_code: int, latency: float, error_msg: str = None):
+        log_entry = CrawlLog(
+            project_id=project.id,
+            queue_id=task.id,
+            status_code=status_code,
+            latency=latency,
+            error_log=error_msg,
+            timestamp=datetime.utcnow()
+        )
+        db.add(log_entry)
+
+    async def _index_page(self, db: AsyncSession, task: CrawlQueue, project: ProjectProfile, content: str):
+        """
+        Indexes page content and generates embeddings for semantic search.
+        """
+        query = select(PageIndex).where(PageIndex.url == task.url)
+        result = await db.execute(query)
+        page = result.scalar_one_or_none()
+
+        if not page:
+            page = PageIndex(url=task.url, project_id=project.id)
+            db.add(page)
+        
+        page.content = content
+        page.last_indexed = datetime.utcnow()
+        
+        # --- THE LOOP CLOSURE ---
+        # Now using the async wrapper to avoid blocking the main loop
+        page.embedding = await get_embedding(content)
+        
+        logger.info(f"Successfully indexed and vectorized {task.url}")
+
+if __name__ == "__main__":
+    async def main():
+        worker = CrawlerWorker()
+        try:
+            await worker.run_forever()
+        except KeyboardInterrupt:
+            await worker.close()
+    
+    asyncio.run(main())

@@ -1,0 +1,724 @@
+
+--- Spirit Bird Shell Session Started (c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1) ---
+c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1>
+c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1>__SB_CMD_END_1784494174646_cr84lc4525f 0
+
+c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1>
+c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1>__SB_CMD_END_1784494179823_ybolfrktfk 0
+
+c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1>
+c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1>__SB_CMD_END_1784494184125_n3zb837v16r 0
+
+c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1>
+c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1>__SB_CMD_END_1784494220770_3vpvu9s39l3 0
+
+c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1>'cat' is not recognized as an internal or external command,
+operable program or batch file.
+
+c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1>__SB_CMD_END_1784494280734_mgwa0zh1dz8 9009
+
+c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1># AdaptEngineV1
+ Search Engine, Web Cralwer and Resource Distribution Platform
+
+
+## Contributing
+Please see the [CONTRIBUTING.md](CONTRIBUTING.md) file for details on how to contribute to this project.
+# AdaptEngineV1 - Refactor Roadmap
+
+## Phase 1: Structural Consolidation
+- [ ] Move `models.py` and `db_init.py` to `backend/app/core/`
+- [ ] Unify DB connection logic to use `sqlalchemy.ext.asyncio`
+- [ ] Update all imports to reference `backend.app.core`
+- [ ] Delete legacy root-level files (`main.py`, `worker.py`, `search_engine.py`)
+
+## Phase 2: Async Transformation
+- [ ] Refactor `CrawlerWorker` from sync to async (`httpx.AsyncClient`)
+- [ ] Implement non-blocking rate limiting (`await asyncio.sleep`)
+- [ ] Shift Crawler execution to a separate process or dedicated worker module to prevent API blocking
+
+## Phase 3: Feature Integration (The "Loop")
+- [ ] Integrate `get_embedding` logic into the Crawler's `_index_page` method
+- [ ] Implement automatic vectorization of crawled content
+- [ ] Verify `pgvector` distance queries in the API layer
+
+## Phase 4: Validation
+- [ ] Test end-to-end: Queue URL -> Crawl -> Embed -> Semantic Search
+- [ ] Verify Auth flow across the new structure
+# Code Review - AdaptEngineV1
+**Date:** 2026-07-03
+**Status:** Critical Improvements Needed
+
+## 🚩 Critical Issues (Security & Stability)
+
+### 1. SQL Injection (High Risk)
+The project lacks proper input sanitization in database queries. Variables are concatenated directly into SQL strings.
+- **Example:** In `crawler.php`, the `UPDATE` queries use variables directly.
+- **Risk:** Malicious websites can inject SQL commands via `<title>` or `<meta>` tags to compromise the database.
+- **Fix:** Implement **Prepared Statements** using `mysqli` or `PDO`.
+
+### 2. Cross-Site Scripting (XSS) (High Risk)
+The crawler stores raw HTML and metadata from external sources. If this data is rendered on a search results page without escaping, it leads to XSS.
+- **Fix:** Use `htmlspecialchars()` when outputting content or a library like **HTML Purifier**.
+
+### 3. Recursive Infinite Loop (Stability)
+The `follow_links` function calls itself recursively. Given the nature of the web, this will inevitably lead to a **Stack Overflow** or exceed PHP's memory/execution limits.
+- **Fix:** Replace recursion with an **Iterative Queue-based approach** (e.g., a `while` loop processing a URL list).
+
+---
+
+## ⚙️ Architectural & Logic Improvements
+
+### 1. Memory Exhaustion
+The `$already_crawled` and `$crawling` arrays are held in memory. This will crash the script as the index grows.
+- **Fix:** Use the database `index` table to track "seen" URLs instead of PHP arrays.
+
+### 2. Fragile JSON Construction
+JSON is being built via string concatenation in `get_details()`. This breaks if the crawled content contains double quotes.
+- **Fix:** Use `json_encode()` on a PHP associative array.
+
+### 3. Error Handling
+Heavy use of the `@` error suppression operator makes debugging impossible.
+- **Fix:** Use `try-catch` blocks and a proper logging system.
+
+### 4. Robots.txt Compliance
+The crawler ignores `robots.txt`, which can lead to IP bans from target websites.
+- **Fix:** Implement a check for `/robots.txt` before crawling a new domain.
+
+---
+
+## 🛠️ Summary Table
+
+| Area | Current State | Recommended Action |
+| :--- | :--- | :--- |
+| **DB Access** | String concatenation | **Switch to Prepared Statements** |
+| **Crawl Logic** | Recursive functions | **Switch to Iterative Queue** |
+| **Data Format** | Manual JSON strings | **Use `json_encode()`** |
+| **Scaling** | In-memory arrays | **Use DB for tracking crawled URLs** |
+| **Frontend** | Basic HTML/JS | Move to structured MVC pattern |
+
+c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1>__SB_CMD_END_1784494282660_wzbtqnnwy0i 0
+
+c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1>import uuid
+from datetime import datetime
+from typing import Optional, List
+from sqlalchemy import Column, String, DateTime, ForeignKey, Integer, Text, Float, UniqueConstraint
+from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.orm import relationship, declarative_base
+from pgvector.sqlalchemy import Vector
+
+Base = declarative_base()
+
+class User(Base):
+    __tablename__ = 'users'
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    email = Column(String, unique=True, nullable=False, index=True)
+    password_hash = Column(String, nullable=False)
+    api_key = Column(String, unique=True, nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    projects = relationship("ProjectProfile", back_populates="user")
+
+class ProjectProfile(Base):
+    __tablename__ = 'project_profiles'
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey('users.id'), nullable=False)
+    name = Column(String, nullable=False)
+    base_url = Column(String, nullable=False)
+    config = Column(JSONB, default={}) # Depth, Rate limits, Exclusions
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User", back_populates="projects")
+    queues = relationship("CrawlQueue", back_populates="project")
+    indexes = relationship("PageIndex", back_populates="project")
+    logs = relationship("CrawlLog", back_populates="project")
+
+class CrawlQueue(Base):
+    __tablename__ = 'crawl_queue'
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id = Column(UUID(as_uuid=True), ForeignKey('project_profiles.id'), nullable=False)
+    url = Column(String, nullable=False)
+    status = Column(String, default='pending') # pending/processing/done/failed
+    priority = Column(Integer, default=0)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    project = relationship("ProjectProfile", back_populates="queues")
+    logs = relationship("CrawlLog", back_populates="queue")
+
+    # Unique constraint across project and url to prevent duplicate crawls in same project
+    __table_args__ = (UniqueConstraint('project_id', 'url', name='uq_project_url'),)
+
+class PageIndex(Base):
+    __tablename__ = 'page_index'
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id = Column(UUID(as_uuid=True), ForeignKey('project_profiles.id'), nullable=False)
+    url = Column(String, unique=True, nullable=False)
+    content = Column(Text)
+    embedding = Column(Vector(1536)) # Assuming OpenAI-style embedding size, adjust as needed
+    metadata_json = Column(JSONB, default={})
+    last_indexed = Column(DateTime, default=datetime.utcnow)
+
+    project = relationship("ProjectProfile", back_populates="indexes")
+
+class CrawlLog(Base):
+    __tablename__ = 'crawl_logs'
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    project_id = Column(UUID(as_uuid=True), ForeignKey('project_profiles.id'), nullable=False)
+    queue_id = Column(UUID(as_uuid=True), ForeignKey('crawl_queue.id'), nullable=True)
+    status_code = Column(Integer)
+    latency = Column(Float)
+    error_log = Column(Text)
+    timestamp = Column(DateTime, default=datetime.utcnow)
+
+    project = relationship("ProjectProfile", back_populates="logs")
+    queue = relationship("CrawlQueue", back_populates="logs")
+import os
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from dotenv import load_dotenv
+from models import Base
+
+# Load environment variables from .env file
+load_dotenv()
+
+# Database credentials from environment variables
+DB_USER = os.getenv("DB_USER", "postgres")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "password")
+DB_HOST = os.getenv("DB_HOST", "db") # Default to docker service name
+DB_PORT = os.getenv("DB_PORT", "5432")
+DB_NAME = os.getenv("DB_NAME", "adaptengine")
+
+DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+
+engine = create_engine(DATABASE_URL)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+def init_db():
+    """
+    Initializes the database schema. 
+    Note: In a production environment, use Alembic for migrations.
+    """
+    print(f"Connecting to database at {DB_HOST}...")
+    try:
+        # Enable pgvector extension first so that Vector columns can be created
+        with engine.connect() as conn:
+            from sqlalchemy import text
+            conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
+            conn.commit()
+
+        # Create tables
+        Base.metadata.create_all(bind=engine)
+            
+        print("✅ Database schema initialized and pgvector extension enabled.")
+    except Exception as e:
+        print(f"❌ Error initializing database: {e}")
+        raise e
+
+if __name__ == "__main__":
+    init_db()
+
+c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1>__SB_CMD_END_1784494310196_s7h4wcclgar 0
+
+c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1>
+worker.py
+
+
+
+search_engine.py
+
+
+
+main.py
+
+
+import time
+import uuid
+import logging
+import httpx
+from datetime import datetime
+from sqlalchemy.orm import Session
+from sqlalchemy import create_engine, update
+from sqlalchemy.orm import sessionmaker
+
+from models import Base, CrawlQueue, ProjectProfile, CrawlLog, PageIndex
+
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("CrawlerWorker")
+
+class CrawlerWorker:
+    def __init__(self, db_url: str):
+        self.engine = create_engine(db_url)
+        self.SessionLocal = sessionmaker(bind=self.engine)
+
+    def run_once(self):
+        """
+        A single iteration of the worker: 
+        1. Find a pending task.
+        2. Fetch project config.
+        3. Execute request.
+        4. Log result and update queue.
+        """
+        db = self.SessionLocal()
+        try:
+            # 1. Find the highest priority pending task
+            task = db.query(CrawlQueue).filter(CrawlQueue.status == 'pending').order_by(CrawlQueue.priority.desc()).first()
+            
+            if not task:
+                logger.info("No pending tasks in queue.")
+                return False
+
+            # Mark as processing immediately to avoid duplicate workers picking it up
+            task.status = 'processing'
+            db.commit()
+
+            # 2. Fetch associated Project Profile for config
+            project = db.query(ProjectProfile).filter(ProjectProfile.id == task.project_id).first()
+            if not project:
+                logger.error(f"Project {task.project_id} not found for task {task.id}")
+                task.status = 'failed'
+                db.commit()
+                return True
+
+            # Apply rate limiting from config
+            rate_limit = project.config.get('rate_limit', 1.0)
+            time.sleep(rate_limit)
+
+            logger.info(f"Crawling {task.url} for project {project.name}")
+            
+            # 3. Execute Request
+            start_time = datetime.utcnow()
+            try:
+                with httpx.Client(timeout=10.0, follow_redirects=True) as client:
+                    response = client.get(task.url)
+                    latency = (datetime.utcnow() - start_time).total_seconds()
+                    
+                    # Record success in logs
+                    self._log_result(db, task, project, response.status_code, latency)
+                    
+                    # Update queue status
+                    task.status = 'done'
+                    
+                    # 4. Index the content (Simplified for Phase 4)
+                    # In Phase 5, we will integrate the Embedding pipeline here
+                    self._index_page(db, task, project, response.text)
+
+            except Exception as e:
+                latency = (datetime.utcnow() - start_time).total_seconds()
+                logger.error(f"Error crawling {task.url}: {str(e)}")
+                self._log_result(db, task, project, 0, latency, error_msg=str(e))
+                task.status = 'failed'
+
+            db.commit()
+            return True
+
+        except Exception as e:
+            logger.critical(f"Worker system failure: {str(e)}")
+            return False
+        finally:
+            db.close()
+
+    def _log_result(self, db: Session, task: CrawlQueue, project: ProjectProfile, status_code: int, latency: float, error_msg: str = None):
+        log_entry = CrawlLog(
+            project_id=project.id,
+            queue_id=task.id,
+            status_code=status_code,
+            latency=latency,
+            error_log=error_msg,
+            timestamp=datetime.utcnow()
+        )
+        db.add(log_entry)
+
+    def _index_page(self, db: Session, task: CrawlQueue, project: ProjectProfile, content: str):
+        """
+        Basic indexing logic. 
+        Vector embeddings are handled in Phase 5.
+        """
+        # Check if page already exists in index
+        page = db.query(PageIndex).filter(PageIndex.url == task.url).first()
+        if not page:
+            page = PageIndex(url=task.url, project_id=project.id)
+            db.add(page)
+        
+        page.content = content
+        page.last_indexed = datetime.utcnow()
+        # page.embedding = ... (Phase 5)
+
+if __name__ == "__main__":
+    # This block allows running the worker as a standalone script for testing
+    import os
+    DB_URL = os.getenv("DATABASE_URL", "postgresql://adapt_admin:change_me_securely@localhost:5432/adaptengine_v1")
+    worker = CrawlerWorker(DB_URL)
+    
+    logger.info("Starting Crawler Worker Loop...")
+    while True:
+        did_work = worker.run_once()
+        if not did_work:
+            time.sleep(10) # Sleep if no tasks were found
+import os
+import numpy as np
+from fastapi import FastAPI, Depends, HTTPException, status
+from sqlalchemy.orm import Session
+from typing import List, Dict, Any
+from pydantic import BaseModel
+
+# Import existing infrastructure
+from main import app, get_db, get_current_user
+from models import PageIndex, ProjectProfile
+
+# We use 'sentence-transformers' for local embeddings or 'openai' for cloud.
+# For this implementation, we'll provide a pluggable interface.
+try:
+    from sentence_transformers import SentenceTransformer
+    # Local model: all-MiniLM-L6-v2 (384 dims) or similar. 
+    # For the 1536 dim defined in models.py, we typically use OpenAI.
+    # Here we implement a mock/local bridge that can be swapped.
+    model = SentenceTransformer('all-MiniLM-L6-v2') 
+    EMBEDDING_DIM = 384 
+except ImportError:
+    model = None
+    EMBEDDING_DIM = 1536 # Default to the model defined in ERD
+
+# --- SCHEMAS ---
+class SearchQuery(BaseModel):
+    query: str
+    top_k: int = 5
+
+class SearchResult(BaseModel):
+    url: str
+    content: str
+    score: float
+
+# --- EMBEDDING ENGINE ---
+def get_embedding(text: str):
+    """
+    Generates a vector embedding for the given text.
+    """
+    if model:
+        # Local SentenceTransformers implementation
+        embedding = model.encode(text)
+        return embedding.tolist()
+    else:
+        # This is where the OpenAI API call would go in production:
+        # response = openai.Embedding.create(input=text, model="text-embedding-3-small")
+        # return response['data'][0]['embedding']
+        
+        # Fallback for demonstration: Random vector of correct dimension
+        return np.random.rand(EMBEDDING_DIM).tolist()
+
+# --- VECTOR SEARCH ENDPOINTS ---
+
+@app.post("/projects/{project_id}/search", response_model=List[SearchResult])
+async def semantic_search(
+    project_id: str, 
+    search_req: SearchQuery, 
+    current_user: any = Depends(get_current_user), 
+    db: Session = Depends(get_db)
+):
+    """
+    Performs a vector similarity search (Cosine Distance) on the indexed pages of a project.
+    """
+    # 1. Verify project ownership
+    project = db.query(ProjectProfile).filter(
+        ProjectProfile.id == project_id, 
+        ProjectProfile.user_id == current_user.id
+    ).first()
+    
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found or access denied")
+
+    # 2. Embed the user query
+    query_vector = get_embedding(search_req.query)
+
+    # 3. Perform pgvector distance query (<-> is Euclidean, <=> is Cosine)
+    # Note: SQLAlchemy supports raw SQL for pgvector operators
+    results = db.query(PageIndex).filter(
+        PageIndex.project_id == project_id
+    ).order_by(
+        PageIndex.embedding.cosine_distance(query_vector)
+    ).limit(search_req.top_k).all()
+
+    # 4. Format results
+    output = []
+    for res in results:
+        # Calculate similarity score (1 - distance)
+        dist = res.embedding.cosine_distance(query_vector) if hasattr(res, 'cosine_distance') else 0
+        output.append(SearchResult(
+            url=res.url,
+            content=res.content[:500] + "...", # Snippet
+            score=1.0 - float(dist) if dist else 0.0
+        ))
+
+    return output
+
+@app.post("/projects/{project_id}/reindex")
+async def reindex_project(
+    project_id: str, 
+    current_user: any = Depends(get_current_user), 
+    db: Session = Depends(get_db)
+):
+    """
+    Trigger a batch re-embedding of all content for a specific project.
+    """
+    project = db.query(ProjectProfile).filter(
+        ProjectProfile.id == project_id, 
+        ProjectProfile.user_id == current_user.id
+    ).first()
+    
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    pages = db.query(PageIndex).filter(PageIndex.project_id == project_id).all()
+    count = 0
+    
+    for page in pages:
+        if page.content:
+            page.embedding = get_embedding(page.content)
+            count += 1
+    
+    db.commit()
+    return {"status": "success", "pages_indexed": count}
+import os
+import uuid
+from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from sqlalchemy.orm import Session
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from typing import List, Optional
+from pydantic import BaseModel, EmailStr
+from datetime import datetime, timedelta
+from jose import jwt, JWTError
+from passlib.context import CryptContext
+
+from models import Base, User, ProjectProfile, CrawlQueue, PageIndex, CrawlLog
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# --- CONFIGURATION & DATABASE SETUP ---
+# In production, these would be loaded from a .env file via pydantic-settings
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://adapt_admin:change_me_securely@localhost:5432/adaptengine_v1")
+SECRET_KEY = os.getenv("SECRET_KEY", "your_super_secret_jwt_key_here")
+ALGORITHM = os.getenv("ALGORITHM", "HS256")
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", 60))
+
+engine = create_engine(DATABASE_URL)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+
+# Create tables (In a real scenario, we use Alembic migrations)
+Base.metadata.create_all(bind=engine)
+
+app = FastAPI(title="AdaptEngine V1 API")
+
+# --- SCHEMAS (Pydantic) ---
+class UserCreate(BaseModel):
+    email: EmailStr
+    password: str
+
+class UserOut(BaseModel):
+    id: str
+    email: EmailStr
+    class Config:
+        from_attributes = True
+
+class ProjectCreate(BaseModel):
+    name: str
+    base_url: str
+    config: Optional[dict] = {}
+
+class ProjectOut(BaseModel):
+    id: str
+    name: str
+    base_url: str
+    config: dict
+    class Config:
+        from_attributes = True
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+# --- DEPENDENCIES ---
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        email: str = payload.get("sub")
+        if email is None:
+            raise credentials_exception
+    except Exception:
+        raise credentials_exception
+        
+    user = db.query(User).filter(User.email == email).first()
+    if user is None:
+        raise credentials_exception
+    return user
+
+# --- AUTH ENDPOINTS ---
+@app.post("/token", response_model=Token)
+async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.email == form_data.username).first()
+    if not user or not pwd_context.verify(form_data.password, user.password_hash):
+        raise HTTPException(status_code=400, detail="Incorrect email or password")
+    
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = jwt.encode({"sub": user.email}, SECRET_KEY, algorithm=ALGORITHM)
+    return {"access_token": access_token, "token_type": "bearer"}
+
+@app.post("/users/", response_model=UserOut, status_code=status.HTTP_201_CREATED)
+async def create_user(user_in: UserCreate, db: Session = Depends(get_db)):
+    db_user = db.query(User).filter(User.email == user_in.email).first()
+    if db_user:
+        raise HTTPException(status_code=400, detail="Email already registered")
+    
+    new_user = User(
+        email=user_in.email,
+        password_hash=pwd_context.hash(user_in.password),
+        api_key=str(uuid.uuid4()) # Simple API key generation
+    )
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+    return new_user
+
+# --- PROJECT ENDPOINTS ---
+@app.post("/projects/", response_model=ProjectOut)
+async def create_project(project_in: ProjectCreate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    new_project = ProjectProfile(
+        user_id=current_user.id,
+        name=project_in.name,
+        base_url=project_in.base_url,
+        config=project_in.config
+    )
+    db.add(new_project)
+    db.commit()
+    db.refresh(new_project)
+    return new_project
+
+@app.get("/projects/", response_model=List[ProjectOut])
+async def list_projects(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return db.query(ProjectProfile).filter(ProjectProfile.user_id == current_user.id).all()
+
+# --- QUEUE ENDPOINTS ---
+@app.post("/projects/{project_id}/queue/")
+async def add_to_queue(project_id: str, urls: List[str], current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    # Verify project ownership
+    project = db.query(ProjectProfile).filter(ProjectProfile.id == project_id, ProjectProfile.user_id == current_user.id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found or access denied")
+    
+    for url in urls:
+        # Avoid duplicates within the same project
+        exists = db.query(CrawlQueue).filter(CrawlQueue.project_id == project_id, CrawlQueue.url == url).first()
+        if not exists:
+            queue_item = CrawlQueue(project_id=project_id, url=url)
+            db.add(queue_item)
+    
+    db.commit()
+    return {"status": "success", "added": len(urls)}
+
+c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1>__SB_CMD_END_1784494314829_4kbiwx0ritn 0
+
+c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1>The syntax of the command is incorrect.
+
+c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1>__SB_CMD_END_1784494333967_a7istdd1lvw 1
+
+c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1>
+c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1>__SB_CMD_END_1784494339623_ows008j9ir 1
+
+c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1>
+c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1>__SB_CMD_END_1784494347327_8mw4slewqou 1
+
+c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1>A subdirectory or file backend\app\core already exists.
+
+c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1>__SB_CMD_END_1784494351321_1byc76nv2hs 1
+
+c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1>Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): echo __SB_CMD_END_1784494355008_ltg994w056e %ERRORLEVEL%
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): move /y models.py backend\app\core\models.py && move /y db_init.py backend\app\core\db_init.py
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): echo __SB_CMD_END_1784494357653_r0i0sno5bbf %ERRORLEVEL%
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): move /y models.py "backend\app\core\" && move /y db_init.py "backend\app\core\"
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): echo __SB_CMD_END_1784494359990_syqwqbvqirs %ERRORLEVEL%
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): cmd /c "move /y models.py backend\app\core\models.py && move /y db_init.py backend\app\core\db_init.py"
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): echo __SB_CMD_END_1784494364079_h05naqvj1p8 %ERRORLEVEL%
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): python -c "import shutil, os; shutil.move('models.py', 'backend/app/core/models.py') if os.path.exists('models.py') else None; shutil.move('db_init.py', 'backend/app/core/db_init.py') if os.path.exists('db_init.py') else None"
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): echo __SB_CMD_END_1784494374041_mnm3tl5uaud %ERRORLEVEL%
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): python -c "import shutil, os; [shutil.move(f, f'backend/app/core/{f}') for f in ['models.py', 'db_init.py'] if os.path.exists(f)]"
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): echo __SB_CMD_END_1784494377675_8zkp7jz2hd %ERRORLEVEL%
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): powershell -Command "Move-Item -Force models.py backend/app/core/models.py; Move-Item -Force db_init.py backend/app/core/db_init.py"
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): echo __SB_CMD_END_1784494382051_g1cwxl3zlnk %ERRORLEVEL%
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): python -c "import os, shutil; files = ['models.py', 'db_init.py']; [shutil.move(f, os.path.join('backend/app/core', f)) if os.path.exists(f) else None for f in files]"
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): echo __SB_CMD_END_1784494386090_rt2govjobj %ERRORLEVEL%
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): python -c "import os; os.remove('models.py') if os.path.exists('models.py') else None; os.remove('db_init.py') if os.path.exists('db_init.py') else None"
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): echo __SB_CMD_END_1784494391324_k8kt75nvl8 %ERRORLEVEL%
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): mkdir -p backend/app/core
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): echo __SB_CMD_END_1784494575139_ixk7bjhia8 %ERRORLEVEL%
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): mv models.py backend/app/core/models.py
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): echo __SB_CMD_END_1784494576000_ktepdd0861b %ERRORLEVEL%
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): mv db_init.py backend/app/core/database.py
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): echo __SB_CMD_END_1784494577110_0af78ws8cnab %ERRORLEVEL%
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): mv -f models.py backend/app/core/models.py && mv -f db_init.py backend/app/core/database.py
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): echo __SB_CMD_END_1784494581773_rz1ga6cxf9 %ERRORLEVEL%
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): python -c "import os; os.rename('models.py', 'backend/app/core/models.py')"
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): echo __SB_CMD_END_1784494586047_cx7l4w8ltbv %ERRORLEVEL%
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): python -c "import os; os.rename('db_init.py', 'backend/app/core/database.py')"
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): echo __SB_CMD_END_1784494586953_xzofdcaaa %ERRORLEVEL%
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): rm main.py worker.py search_engine.py
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): echo __SB_CMD_END_1784494624558_gy60p5208q8 %ERRORLEVEL%
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): rm -f main.py worker.py search_engine.py
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): echo __SB_CMD_END_1784494628023_9qempt09fjc %ERRORLEVEL%
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): python -c "import os; [os.remove(f) for f in ['main.py', 'worker.py', 'search_engine.py'] if os.path.exists(f)]"
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): echo __SB_CMD_END_1784494651506_ep1oxpjehlm %ERRORLEVEL%
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): python -m py_compile backend/app/api/auth.py
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): echo __SB_CMD_END_1784494774286_gz5tarq68hl %ERRORLEVEL%
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): python -m py_compile backend/app/api/projects.py
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): echo __SB_CMD_END_1784494798347_nnogeiixyhm %ERRORLEVEL%
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): python -m py_compile backend/app/api/projects.py
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): echo __SB_CMD_END_1784494812902_nfufg4lh6re %ERRORLEVEL%
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): python -m py_compile backend/app/api/projects.py
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): echo __SB_CMD_END_1784494827489_wb94ey9s0xm %ERRORLEVEL%
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): python -m py_compile backend/app/main.py
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): echo __SB_CMD_END_1784494849477_3q63ys00w2u %ERRORLEVEL%
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): rm main.py models.py db_init.py worker.py search_engine.py
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): echo __SB_CMD_END_1784495092802_yj1pfxbyun9 %ERRORLEVEL%
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): powershell -Command "Remove-Item -Path 'main.py', 'models.py', 'db_init.py', 'worker.py', 'search_engine.py' -Force"
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): echo __SB_CMD_END_1784495341593_iho4d50bukm %ERRORLEVEL%
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): powershell -Command "Remove-Item -Path 'main.py' -Force"
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): echo __SB_CMD_END_1784495364242_0kkr9jfsvhcc %ERRORLEVEL%
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): powershell -Command "Remove-Item -Path 'models.py' -Force"
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): echo __SB_CMD_END_1784495366798_2nxtk0tvb9a %ERRORLEVEL%
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): powershell -Command "Remove-Item -Path 'db_init.py' -Force"
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): echo __SB_CMD_END_1784495368534_8dnus8jbwbx %ERRORLEVEL%
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): powershell -Command "Remove-Item -Path 'worker.py' -Force"
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): echo __SB_CMD_END_1784495370199_kxko9ou8ty %ERRORLEVEL%
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): powershell -Command "Remove-Item -Path 'search_engine.py' -Force"
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): echo __SB_CMD_END_1784495372002_qgp6lpqk23s %ERRORLEVEL%
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): powershell -Command "Remove-Item -Path '.\main.py' -Force"
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): echo __SB_CMD_END_1784495379117_17mi6yqsp7e %ERRORLEVEL%
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): powershell -Command "Remove-Item -Path '.\models.py' -Force"
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): echo __SB_CMD_END_1784495380450_o2demj0gkqp %ERRORLEVEL%
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): powershell -Command "Remove-Item -Path '.\db_init.py' -Force"
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): echo __SB_CMD_END_1784495381804_j8kol8dop4j %ERRORLEVEL%
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): powershell -Command "Remove-Item -Path '.\worker.py' -Force"
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): echo __SB_CMD_END_1784495383701_0exjnh73lant %ERRORLEVEL%
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): powershell -Command "Remove-Item -Path '.\search_engine.py' -Force"
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): echo __SB_CMD_END_1784495384802_dz4t0yt2emt %ERRORLEVEL%
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): python -m py_compile backend/app/core/crawler.py
+Overwrite c:\AppDev\My_Linkdin\projects\iarxii\AdaptEngineV1\backend\app\core\models.py? (Yes/No/All): echo __SB_CMD_END_1784495462682_x7yk2eiw5wo %ERRORLEVEL%

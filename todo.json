@@ -1,0 +1,26 @@
+[
+  {
+    "text": "Phase 1: Structural Consolidation - Complete",
+    "done": true
+  },
+  {
+    "text": "Phase 2: Implement persistent httpx.AsyncClient in CrawlerWorker",
+    "done": false
+  },
+  {
+    "text": "Phase 2: Offload model.encode to asyncio.to_thread",
+    "done": false
+  },
+  {
+    "text": "Phase 2: Add retry logic to crawl tasks",
+    "done": false
+  },
+  {
+    "text": "Phase 3: Implement pgvector distance queries in API",
+    "done": false
+  },
+  {
+    "text": "Phase 4: E2E Validation and Load Testing",
+    "done": false
+  }
+]
